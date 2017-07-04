@@ -10,7 +10,7 @@
 	<groupId>com.github.docker-java</groupId>
 	<artifactId>docker-java</artifactId>
 	<packaging>jar</packaging>
-	<version>3.0.6-SNAPSHOT</version>
+	<version>3.0.12-SNAPSHOT</version>
 
 	<name>docker-java</name>
 	<url>https://github.com/docker-java/docker-java</url>
@@ -67,7 +67,7 @@
 		<slf4j-api.version>1.7.21</slf4j-api.version>
 
 		<bouncycastle.version>1.54</bouncycastle.version>
-		<unix-socket-factory.version>2015-01-27T15-02-14</unix-socket-factory.version>
+		<junixsocket.version>2.0.4</junixsocket.version>
 		<guava.version>19.0</guava.version>
 
 		<!-- test dependencies -->
@@ -86,6 +86,8 @@
 		<maven-surefire-plugin.version>2.19.1</maven-surefire-plugin.version>
 		<maven-failsafe-plugin.version>2.19.1</maven-failsafe-plugin.version>
 		<maven-antrun-plugin.version>1.8</maven-antrun-plugin.version>
+		<maven-bundlor-plugin.version>1.1.2.RELEASE</maven-bundlor-plugin.version>
+		<maven-build-helper-plugin.version>3.0.0</maven-build-helper-plugin.version>
 	</properties>
 
 	<dependencies>
@@ -108,6 +110,12 @@
 			<groupId>org.apache.httpcomponents</groupId>
 			<artifactId>httpclient</artifactId>
 			<version>${httpclient.version}</version>
+			<exclusions>
+				<exclusion>
+					<groupId>commons-logging</groupId>
+					<artifactId>commons-logging</artifactId>
+				</exclusion>
+			</exclusions>
 		</dependency>
 		<dependency>
 			<groupId>org.glassfish.jersey.core</groupId>
@@ -115,11 +123,15 @@
 			<version>${jersey.version}</version>
 		</dependency>
 		<dependency>
-			<groupId>de.gesellix</groupId>
-			<artifactId>unix-socket-factory</artifactId>
-			<version>${unix-socket-factory.version}</version>
+			<groupId>com.kohlschutter.junixsocket</groupId>
+			<artifactId>junixsocket-common</artifactId>
+			<version>${junixsocket.version}</version>
 		</dependency>
-
+		<dependency>
+			<groupId>com.kohlschutter.junixsocket</groupId>
+			<artifactId>junixsocket-native-common</artifactId>
+			<version>${junixsocket.version}</version>
+		</dependency>
 		<dependency>
 			<groupId>org.apache.commons</groupId>
 			<artifactId>commons-compress</artifactId>
@@ -265,14 +277,20 @@
 		</repository>
 	</distributionManagement>
 
+	<pluginRepositories>
+		<pluginRepository>
+			<id>eclipse.virgo.build.bundles.release</id>
+			<name>Eclipse Virgo Build</name>
+			<url>http://build.eclipse.org/rt/virgo/maven/bundles/release</url>
+		</pluginRepository>
+		<pluginRepository>
+			<id>com.springsource.repository.bundles.external</id>
+			<name>SpringSource Enterprise Bundle Repository - External Bundle Releases</name>
+			<url>http://repository.springsource.com/maven/bundles/external</url>
+		</pluginRepository>
+	</pluginRepositories>
+
 	<build>
-<!-- 		<extensions> -->
-<!-- 			<extension> -->
-<!-- 				<groupId>kr.motd.maven</groupId> -->
-<!-- 				<artifactId>os-maven-plugin</artifactId> -->
-<!-- 				<version>1.2.3.Final</version> -->
-<!-- 			</extension> -->
-<!-- 		</extensions> -->
 		<pluginManagement>
 			<plugins>
 
@@ -298,6 +316,11 @@
 					<groupId>org.apache.maven.plugins</groupId>
 					<artifactId>maven-jar-plugin</artifactId>
 					<version>${maven-jar-plugin.version}</version>
+					<configuration>
+						<archive>
+							<manifestFile>target/classes/META-INF/MANIFEST.MF</manifestFile>
+						</archive>
+					</configuration>
 					<executions>
 						<execution>
 							<goals>
@@ -400,6 +423,7 @@
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>${maven-surefire-plugin.version}</version>
 				<configuration>
+					<rerunFailingTestsCount>3</rerunFailingTestsCount>
 					<excludedGroups>integration,integration-auth</excludedGroups>
 				</configuration>
 			</plugin>
@@ -415,11 +439,12 @@
 							<goal>verify</goal>
 						</goals>
 						<configuration>
+							<rerunFailingTestsCount>3</rerunFailingTestsCount>
 							<useUnlimitedThreads>true</useUnlimitedThreads>
 							<perCoreThreadCount>true</perCoreThreadCount>
 							<threadCount>1</threadCount>
 							<groups>integration</groups>
- 							<excludedGroups>integration-auth</excludedGroups>
+							<excludedGroups>integration-auth</excludedGroups>
 							<includes>
 								<include>**/*Test.java</include>
 							</includes>
@@ -430,6 +455,37 @@
 			<plugin>
 				<groupId>org.apache.maven.plugins</groupId>
 				<artifactId>maven-source-plugin</artifactId>
+			</plugin>
+
+			<plugin>
+				<groupId>org.eclipse.virgo.bundlor</groupId>
+				<artifactId>org.eclipse.virgo.bundlor.maven</artifactId>
+				<version>${maven-bundlor-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>bundlor</id>
+						<goals>
+							<goal>bundlor</goal>
+						</goals>
+						<configuration>
+							<failOnWarnings>true</failOnWarnings>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+
+			<plugin>
+				<groupId>org.codehaus.mojo</groupId>
+				<artifactId>build-helper-maven-plugin</artifactId>
+				<version>${maven-build-helper-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>parse-version</id>
+						<goals>
+							<goal>parse-version</goal>
+						</goals>
+					</execution>
+				</executions>
 			</plugin>
 		</plugins>
 	</build>
@@ -483,7 +539,8 @@
 							<failOnViolation>true</failOnViolation>
 							<logViolationsToConsole>true</logViolationsToConsole>
 							<linkXRef>false</linkXRef>
-							<!-- if some IDE has integration and requires other place, propose it -->
+							<!-- if some IDE has integration and requires other place, propose 
+								it -->
 							<configLocation>
 								src/test/resources/checkstyle/checkstyle-config.xml
 							</configLocation>

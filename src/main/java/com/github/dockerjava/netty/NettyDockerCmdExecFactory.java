@@ -108,6 +108,9 @@ import com.github.dockerjava.netty.exec.WaitContainerCmdExec;
 import com.github.dockerjava.netty.exec.RenameContainerCmdExec;
 
 import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelConfig;
+import io.netty.channel.ChannelFactory;
 import io.netty.channel.ChannelInitializer;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.epoll.EpollDomainSocketChannel;
@@ -169,6 +172,8 @@ public class NettyDockerCmdExecFactory implements DockerCmdExecFactory {
 
     private NettyInitializer nettyInitializer;
 
+    private WebTarget baseResource;
+
     private ChannelProvider channelProvider = new ChannelProvider() {
         @Override
         public DuplexChannel getChannel() {
@@ -177,6 +182,8 @@ public class NettyDockerCmdExecFactory implements DockerCmdExecFactory {
             return channel;
         }
     };
+
+    private Integer connectTimeout = null;
 
     @Override
     public void init(DockerClientConfig dockerClientConfig) {
@@ -194,6 +201,8 @@ public class NettyDockerCmdExecFactory implements DockerCmdExecFactory {
         }
 
         eventLoopGroup = nettyInitializer.init(bootstrap, dockerClientConfig);
+
+        baseResource = new WebTarget(channelProvider).path(dockerClientConfig.getApiVersion().asWebPathPart());
     }
 
     private DuplexChannel connect() {
@@ -218,7 +227,15 @@ public class NettyDockerCmdExecFactory implements DockerCmdExecFactory {
         @Override
         public EventLoopGroup init(Bootstrap bootstrap, DockerClientConfig dockerClientConfig) {
             EventLoopGroup epollEventLoopGroup = new EpollEventLoopGroup(0, new DefaultThreadFactory(threadPrefix));
-            bootstrap.group(epollEventLoopGroup).channel(EpollDomainSocketChannel.class)
+
+            ChannelFactory<EpollDomainSocketChannel> factory = new ChannelFactory<EpollDomainSocketChannel>() {
+                @Override
+                public EpollDomainSocketChannel newChannel() {
+                    return configure(new EpollDomainSocketChannel());
+                }
+            };
+
+            bootstrap.group(epollEventLoopGroup).channelFactory(factory)
                     .handler(new ChannelInitializer<UnixChannel>() {
                         @Override
                         protected void initChannel(final UnixChannel channel) throws Exception {
@@ -245,7 +262,14 @@ public class NettyDockerCmdExecFactory implements DockerCmdExecFactory {
 
             Security.addProvider(new BouncyCastleProvider());
 
-            bootstrap.group(nioEventLoopGroup).channel(NioSocketChannel.class)
+            ChannelFactory<NioSocketChannel> factory = new ChannelFactory<NioSocketChannel>() {
+                @Override
+                public NioSocketChannel newChannel() {
+                    return configure(new NioSocketChannel());
+                }
+            };
+
+            bootstrap.group(nioEventLoopGroup).channelFactory(factory)
                     .handler(new ChannelInitializer<SocketChannel>() {
                         @Override
                         protected void initChannel(final SocketChannel channel) throws Exception {
@@ -580,7 +604,26 @@ public class NettyDockerCmdExecFactory implements DockerCmdExecFactory {
         eventLoopGroup.shutdownGracefully();
     }
 
+    /**
+     * Configure connection timeout in milliseconds
+     */
+    public NettyDockerCmdExecFactory withConnectTimeout(Integer connectTimeout) {
+        this.connectTimeout = connectTimeout;
+        return this;
+    }
+
+    private <T extends Channel> T configure(T channel) {
+        ChannelConfig channelConfig = channel.config();
+
+        if (connectTimeout != null) {
+            channelConfig.setConnectTimeoutMillis(connectTimeout);
+        }
+
+        return channel;
+    }
+
     private WebTarget getBaseResource() {
-        return new WebTarget(channelProvider);
+        checkNotNull(baseResource, "Factory not initialized, baseResource not set. You probably forgot to call init()!");
+        return baseResource;
     }
 }

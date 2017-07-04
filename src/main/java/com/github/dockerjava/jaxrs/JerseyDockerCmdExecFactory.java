@@ -9,6 +9,7 @@ import java.net.ProxySelector;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 import javax.net.ssl.SSLContext;
 import javax.ws.rs.client.Client;
@@ -20,6 +21,7 @@ import javax.ws.rs.client.WebTarget;
 import com.github.dockerjava.api.command.UpdateContainerCmd;
 import com.github.dockerjava.core.SSLConfig;
 
+import org.apache.http.client.config.RequestConfig;
 import org.apache.http.config.RegistryBuilder;
 import org.apache.http.conn.socket.ConnectionSocketFactory;
 import org.apache.http.conn.socket.PlainConnectionSocketFactory;
@@ -110,6 +112,8 @@ public class JerseyDockerCmdExecFactory implements DockerCmdExecFactory {
 
     private Integer maxPerRouteConnections = null;
 
+    private Integer connectionRequestTimeout = null;
+
     private ClientRequestFilter[] clientRequestFilters = null;
 
     private ClientResponseFilter[] clientResponseFilters = null;
@@ -130,15 +134,17 @@ public class JerseyDockerCmdExecFactory implements DockerCmdExecFactory {
         clientConfig.register(ResponseStatusExceptionFilter.class);
         clientConfig.register(JsonClientFilter.class);
         clientConfig.register(JacksonJsonProvider.class);
-
+        RequestConfig.Builder requestConfigBuilder = RequestConfig.custom();
         // logging may disabled via log level
         clientConfig.register(new SelectiveLoggingFilter(LOGGER, true));
 
         if (readTimeout != null) {
+            requestConfigBuilder.setSocketTimeout(readTimeout);
             clientConfig.property(ClientProperties.READ_TIMEOUT, readTimeout);
         }
 
         if (connectTimeout != null) {
+            requestConfigBuilder.setConnectTimeout(connectTimeout);
             clientConfig.property(ClientProperties.CONNECT_TIMEOUT, connectTimeout);
         }
 
@@ -187,7 +193,7 @@ public class JerseyDockerCmdExecFactory implements DockerCmdExecFactory {
                 throw new RuntimeException(e);
             }
 
-            configureProxy(clientConfig, protocol);
+            configureProxy(clientConfig, originalUri, protocol);
         }
 
         connManager = new PoolingHttpClientConnectionManager(getSchemeRegistry(
@@ -216,9 +222,10 @@ public class JerseyDockerCmdExecFactory implements DockerCmdExecFactory {
         clientConfig.property(ApacheClientProperties.CONNECTION_MANAGER, connManager);
 
         // Configure connection pool timeout
-        // clientConfig.property(ApacheClientProperties.REQUEST_CONFIG, RequestConfig.custom()
-        // .setConnectionRequestTimeout(1000).build());
-
+        if (connectionRequestTimeout != null) {
+            requestConfigBuilder.setConnectionRequestTimeout(connectionRequestTimeout);
+        }
+        clientConfig.property(ApacheClientProperties.REQUEST_CONFIG, requestConfigBuilder.build());
         ClientBuilder clientBuilder = ClientBuilder.newBuilder().withConfig(clientConfig);
 
         if (sslContext != null) {
@@ -237,9 +244,9 @@ public class JerseyDockerCmdExecFactory implements DockerCmdExecFactory {
         return originalUri;
     }
 
-    private void configureProxy(ClientConfig clientConfig, String protocol) {
+    private void configureProxy(ClientConfig clientConfig, URI originalUri, String protocol) {
 
-        List<Proxy> proxies = ProxySelector.getDefault().select(dockerClientConfig.getDockerHost());
+        List<Proxy> proxies = ProxySelector.getDefault().select(originalUri);
 
         for (Proxy proxy : proxies) {
             InetSocketAddress address = (InetSocketAddress) proxy.address();
@@ -262,7 +269,7 @@ public class JerseyDockerCmdExecFactory implements DockerCmdExecFactory {
     }
 
     private org.apache.http.config.Registry<ConnectionSocketFactory> getSchemeRegistry(final URI originalUri,
-            SSLContext sslContext) {
+                                                                                       SSLContext sslContext) {
         RegistryBuilder<ConnectionSocketFactory> registryBuilder = RegistryBuilder.create();
         registryBuilder.register("http", PlainConnectionSocketFactory.getSocketFactory());
         if (sslContext != null) {
@@ -570,6 +577,11 @@ public class JerseyDockerCmdExecFactory implements DockerCmdExecFactory {
         return this;
     }
 
+    public JerseyDockerCmdExecFactory withConnectionRequestTimeout(Integer connectionRequestTimeout) {
+        this.connectionRequestTimeout = connectionRequestTimeout;
+        return this;
+    }
+
     public JerseyDockerCmdExecFactory withClientResponseFilters(ClientResponseFilter... clientResponseFilter) {
         this.clientResponseFilters = clientResponseFilter;
         return this;
@@ -580,4 +592,14 @@ public class JerseyDockerCmdExecFactory implements DockerCmdExecFactory {
         return this;
     }
 
+
+    /**
+     * release connections from the pool
+     *
+     * @param idleSeconds idle seconds, longer than the configured value will be evicted
+     */
+    public void releaseConnection(long idleSeconds) {
+        this.connManager.closeExpiredConnections();
+        this.connManager.closeIdleConnections(idleSeconds, TimeUnit.SECONDS);
+    }
 }
